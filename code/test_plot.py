@@ -1,15 +1,16 @@
 from utils import ScaraRobot
-from utils import CIRCLE, FLOWER, FLOWER_2
+from utils import FLOWER, FLOWER_2
+from utils import SCARA_ROBOT_V1
 
 if __name__ == "__main__":
     robot = ScaraRobot(
-        length_first_arm=7,
-        length_second_arm=7,
-        angle_per_motor_step=365/4094,
-        timeout_between_steps_sec=0.2,
-        arm_route_x_y_positions=FLOWER_2,
-        visualization_mode=True
+        length_first_arm=SCARA_ROBOT_V1['length_first_arm'],
+        length_second_arm=SCARA_ROBOT_V1['length_second_arm'],
+        angle_per_motor_step=SCARA_ROBOT_V1['angle_per_motor_step'],
+        timeout_between_steps_sec=SCARA_ROBOT_V1['timeout_between_steps_sec'],
+        art_lambda_function=FLOWER_2,
+        visualization_mode=True,
+        number_of_steps=100
     )
 
-    for i in range(0, 200):
-        robot.start()
+    robot.start()
