@@ -1,9 +1,12 @@
+import os
+import json
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 from typing import Callable, List, Tuple
 from matplotlib.animation import FuncAnimation
+from .polar_equation_art import ARTWORKS
 
 
 class ScaraRobot:
@@ -16,43 +19,35 @@ class ScaraRobot:
 
     Arguments
     ---------
-    length_first_arm : int
-        Length of first arm.
-
-    length_second_arm : int
-        Length of second arm.
-
-    angle_per_motor_step : float
-        Number of degrees per step by the stepper motor.
-
-    art_config : dict
-        Config of the polar equation graph that is going to be drawn by the SCARA robot.
-
-    number_of_steps : int
-        Number of steps to complete one full 'circle' of the polar equation graph.
-
-    visualization_mode : bool
-        Visualization mode.
+    config_dir : str
+        Path to the configuration file, containing information about the SCARA robot and the artworks.
     """
     def __init__(self,
-                 length_first_arm: int,
-                 length_second_arm: int,
-                 angle_per_motor_step: float,
-                 art_config: dict,
-                 number_of_steps: int = 1000,
-                 visualization_mode: bool = False):
-        self.length_first_arm = length_first_arm
-        self.length_second_arm = length_second_arm
-        self.angle_per_motor_step = angle_per_motor_step
-        self.number_of_steps = number_of_steps
+                 config_dir: str):
+        if not os.path.isfile(config_dir):
+            raise FileExistsError(f"Config file '{config_dir}' does not exist.")
+        else:
+            with open(config_dir) as f:
+                config = json.load(f)
 
-        self.arm_route_x_y_positions = self._generate_x_y_from_config(
-            lambda_function=art_config['func'],
-            lower_limit=art_config['lower_limit'],
-            upper_limit=art_config['upper_limit'],
-            scale=art_config['scale'],
-            num_steps=number_of_steps
-        )
+        robot_config = config['robot']
+        artworks_config = config['artworks']
+
+        self.length_first_arm = robot_config['length_first_arm']
+        self.length_second_arm = robot_config['length_second_arm']
+        self.angle_per_motor_step = robot_config['angle_per_motor_step']
+
+        self.arm_route_x_y_positions = []
+        for artwork_pattern in artworks_config['patterns']:
+            artwork = ARTWORKS[artwork_pattern]
+            x_y_route = self._generate_x_y_from_config(
+                lambda_function=artwork['func'],
+                lower_limit=artwork['lower_limit'],
+                upper_limit=artwork['upper_limit'],
+                scale=artwork['scale'],
+                num_steps=artworks_config['number_of_steps_per_cycle']
+            )
+            self.arm_route_x_y_positions.extend(x_y_route)
 
         self.current_route_index = 0
         self.current_actual_angle_first_arm = 0.
@@ -60,7 +55,7 @@ class ScaraRobot:
         self.previous_actual_angle_first_arm = 0.
         self.previous_actual_angle_second_arm = 0.
 
-        if visualization_mode:
+        if artworks_config['visualization_mode']:
             plt.style.use("ggplot")
             absolute_value_axis_limits = self.length_first_arm + self.length_second_arm
             self.fig = plt.figure()
@@ -71,8 +66,10 @@ class ScaraRobot:
 
             x_y_first_arm, x_y_second_arm = self._compute_x_y_position_arms()
             self.x_y_trajectory = deque([(x_y_second_arm['x'][1], x_y_second_arm['y'][1])])
-            self.x_trajectory = deque([x_y_second_arm['x'][1]], maxlen=number_of_steps)
-            self.y_trajectory = deque([x_y_second_arm['y'][1]], maxlen=number_of_steps)
+            self.x_trajectory = deque([x_y_second_arm['x'][1]],
+                                      maxlen=artworks_config['number_of_steps_per_cycle'])
+            self.y_trajectory = deque([x_y_second_arm['y'][1]],
+                                      maxlen=artworks_config['number_of_steps_per_cycle'])
 
             self.first_arm_plot, = self.ax.plot(x_y_first_arm['x'], x_y_first_arm['y'])
             self.second_arm_plot, = self.ax.plot(x_y_second_arm['x'], x_y_second_arm['y'])
