@@ -76,8 +76,8 @@ class ScaraRobot:
             self.second_arm_plot, = self.ax.plot(x_y_second_arm['x'], x_y_second_arm['y'])
             self.x_y_trajectory_plot, = self.ax.plot(x_y_second_arm['x'][1], x_y_second_arm['y'][1])
 
-    @staticmethod
-    def _generate_x_y_art(lambda_function: Callable,
+    def _generate_x_y_art(self,
+                          lambda_function: Callable,
                           num_steps: int,
                           scale: float = 1,
                           lower_limit: float = 0,
@@ -120,6 +120,12 @@ class ScaraRobot:
         for theta in theta_list:
             r = lambda_function(theta=theta)*scale
             coordinates.append((r * np.cos(theta), r * np.sin(theta)))
+
+        for x, y in coordinates:
+            if np.sqrt(x**2 + y**2) > self.length_first_arm + self.length_second_arm:
+                raise ValueError(f"Magnitude from origo to ({x}, {y}) too large for arms to draw. "
+                                 f"Adjust polar equation.")
+
         return coordinates
 
     @staticmethod
@@ -368,7 +374,7 @@ class ScaraRobot:
     def start(self):
         animation_interval = len(self.arm_route_x_y_positions) - 1
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=20, blit=False, save_count=animation_interval)
+                             interval=5, blit=False, save_count=animation_interval)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
