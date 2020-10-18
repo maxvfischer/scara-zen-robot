@@ -43,6 +43,15 @@ SPIRAL_2 = {
     'upper_limit': 38 * np.pi
 }
 
+SPIRAL_3 = {
+    'description': "Spiral that erases the current art",
+    'func': eval("lambda theta: theta"),
+    'scale': 0.15,
+    'lower_limit': 0,
+    'upper_limit': 29 * np.pi
+}
+
+
 HAMPA_1 = {
     'description': "Cannabis leaf",
     'func': eval("lambda theta: "
@@ -55,10 +64,12 @@ HAMPA_1 = {
     'upper_limit': 2 * np.pi
 }
 
-ERASE_1 = {
-    'description': "Spiral that erases the current art",
-    'func': eval("lambda theta: theta + np.cos(15)"),
-    'scale': 0.15,
-    'lower_limit': 0,
-    'upper_limit': 29 * np.pi
+ARTWORKS = {
+    'FLOWER_1': FLOWER_1,
+    'FLOWER_2': FLOWER_2,
+    'FLOWER_3': FLOWER_3,
+    'SPIRAL_1': SPIRAL_1,
+    'SPIRAL_2': SPIRAL_2,
+    'SPIRAL_3': SPIRAL_3,
+    'HAMPA_1': HAMPA_1
 }
