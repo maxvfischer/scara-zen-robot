@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
@@ -43,8 +44,9 @@ class ScaraRobot:
         self.length_first_arm = length_first_arm
         self.length_second_arm = length_second_arm
         self.angle_per_motor_step = angle_per_motor_step
+        self.number_of_steps = number_of_steps
 
-        self.arm_route_x_y_positions = self._generate_x_y_art(
+        self.arm_route_x_y_positions = self._generate_x_y_from_config(
             lambda_function=art_config['func'],
             lower_limit=art_config['lower_limit'],
             upper_limit=art_config['upper_limit'],
@@ -76,12 +78,41 @@ class ScaraRobot:
             self.second_arm_plot, = self.ax.plot(x_y_second_arm['x'], x_y_second_arm['y'])
             self.x_y_trajectory_plot, = self.ax.plot(x_y_second_arm['x'][1], x_y_second_arm['y'][1])
 
-    def _generate_x_y_art(self,
-                          lambda_function: Callable,
-                          num_steps: int,
-                          scale: float = 1,
-                          lower_limit: float = 0,
-                          upper_limit: float = 2*np.pi) -> List[Tuple[float, float]]:
+    @staticmethod
+    def _artwork_is_cyclic(route: List[Tuple[float, float]], epsilon=1e-6):
+        """
+        Checks if artwork is cyclic by checking if the distance between (x_first, y_first) and (x_last, y_last) is
+        smaller than epsilon.
+
+        Parameters
+        ----------
+        route : List[Tuple[float, float]]
+            List of (x, y) coordinates of the artwork.
+
+        epsilon : float
+            Epsilon to compare distance with.
+
+        Return
+        ------
+        bool
+            If artwork is cyclic or not.
+
+        """
+        first_x, first_y = route[0][0], route[0][1]
+        last_x, last_y = route[-1][0], route[-1][1]
+        distance_first_to_last = np.sqrt((last_x-first_x)**2 + (last_y-first_y)**2)
+
+        if distance_first_to_last < epsilon:
+            return True
+        else:
+            return False
+
+    def _generate_x_y_from_config(self,
+                                  lambda_function: Callable,
+                                  num_steps: int,
+                                  scale: float = 1,
+                                  lower_limit: float = 0,
+                                  upper_limit: float = 2*np.pi) -> List[Tuple[float, float]]:
         """
         Generates a list of (x, y) coordinates, generated from a polar equation implemented as a lambda function.
 
@@ -115,16 +146,31 @@ class ScaraRobot:
         assert len(lambda_args) == 1 and lambda_args[0] == 'theta', \
             "lambda_function is only allowed to have one parameter: 'theta'"
 
+        # Generate (x, y) coordinates of artwork
         theta_list = np.linspace(lower_limit, upper_limit, num_steps)
         coordinates = []
         for theta in theta_list:
             r = lambda_function(theta=theta)*scale
             coordinates.append((r * np.cos(theta), r * np.sin(theta)))
 
+        # Check if (x, y) coordinates are OK for arms to draw
         for x, y in coordinates:
             if np.sqrt(x**2 + y**2) > self.length_first_arm + self.length_second_arm:
                 raise ValueError(f"Magnitude from origo to ({x}, {y}) too large for arms to draw. "
-                                 f"Adjust polar equation.")
+                             f"Adjust polar equation.")
+
+        # If artwork is NOT cyclic, i.e. (last_x, last_y) !≈ (first_x, first_y),
+        # generate mirrored route and extend at the end of the list of coordinates.
+        # Artwork is now cyclic, i.e. (last_x, last_y) ≈ (first_x, first_y)
+        if not self._artwork_is_cyclic(route=coordinates):
+            route = copy.copy(coordinates)
+            last_x, last_y = route[-1][0], route[-1][1]
+            if np.abs(last_x) < np.abs(last_y):
+                route = [(-1*x, y) for x, y in route]
+            else:
+                route = [(x, -1*y) for x, y in route]
+            mirrored_route = np.flip(route, axis=0)
+            coordinates.extend(mirrored_route)
 
         return coordinates
 
@@ -374,9 +420,30 @@ class ScaraRobot:
     def start(self):
         animation_interval = len(self.arm_route_x_y_positions) - 1
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=5, blit=False, save_count=animation_interval)
+                             interval=15, blit=False, save_count=animation_interval)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
     def stop(self):
         raise NotImplementedError
+
+    def _add_return_to_origo_x_y(self, num_steps=50):
+        _, x_y_second_arm = self._compute_x_y_position_arms()
+        current_x, current_y = x_y_second_arm['x'][1], x_y_second_arm['y'][1]
+
+        if current_x >= 0:
+            x, y = (0, current_x), (0, current_y)
+            x_interpolation = np.linspace(x[0], x[1], num_steps)
+            y_interpolation = np.interp(x_interpolation, x, y)
+            x_interpolation = np.flip(x_interpolation)
+            y_interpolation = np.flip(y_interpolation)
+        else:
+            x, y = (current_x, 0), (current_y, 0)
+            x_interpolation = np.linspace(x[0], x[1], num_steps)
+            y_interpolation = np.interp(x_interpolation, x, y)
+
+        to_origo_coordinates = [(x_coordinate, y_coordinate)
+                                for x_coordinate, y_coordinate in zip(x_interpolation, y_interpolation)]
+
+        self.arm_route_x_y_positions = []
+        self.arm_route_x_y_positions.extend(to_origo_coordinates)

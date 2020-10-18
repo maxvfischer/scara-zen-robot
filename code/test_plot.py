@@ -8,7 +8,7 @@ if __name__ == "__main__":
         length_first_arm=SCARA_ROBOT_V1['length_first_arm'],
         length_second_arm=SCARA_ROBOT_V1['length_second_arm'],
         angle_per_motor_step=SCARA_ROBOT_V1['angle_per_motor_step'],
-        art_config=ERASE_1,
+        art_config=SPIRAL_1,
         visualization_mode=True,
         number_of_steps=1000
     )
