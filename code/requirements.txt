@@ -1,2 +1,5 @@
 matplotlib
 numpy
+google-auth
+google-cloud-storage
+google-cloud-firestore

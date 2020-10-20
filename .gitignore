@@ -7,3 +7,7 @@
 # Python
 *.pyc
 *.pyo
+
+# Secrets
+machine_config.json
+gcloud_key.json
