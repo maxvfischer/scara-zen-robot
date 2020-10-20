@@ -1,12 +1,13 @@
 import os
 import json
 import copy
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Union
 from matplotlib.animation import FuncAnimation
-from .polar_equation_art import ARTWORKS
+from google.cloud import firestore
 
 
 class ScaraRobot:
@@ -19,61 +20,123 @@ class ScaraRobot:
 
     Arguments
     ---------
-    config_dir : str
-        Path to the configuration file, containing information about the SCARA robot and the artworks.
+    machine_config_path : str
+        Path to the machine configuration file, containing the SCARA robot uid.
     """
     def __init__(self,
-                 config_dir: str):
-        if not os.path.isfile(config_dir):
-            raise FileExistsError(f"Config file '{config_dir}' does not exist.")
+                 machine_config_path: str):
+        if not os.path.isfile(machine_config_path):
+            raise FileExistsError(f"Config file '{machine_config_path}' does not exist.")
         else:
-            with open(config_dir) as f:
-                config = json.load(f)
+            with open(machine_config_path) as f:
+                machine_config = json.load(f)
+        self.machine_id = machine_config['machine_id']
 
-        robot_config = config['robot']
-        artworks_config = config['artworks']
+        # Machine setup
+        self.length_first_arm = None
+        self.length_second_arm = None
+        self.angle_per_motor_step = None
 
-        self.length_first_arm = robot_config['length_first_arm']
-        self.length_second_arm = robot_config['length_second_arm']
-        self.angle_per_motor_step = robot_config['angle_per_motor_step']
-
+        # Artwork settings
+        self.stop_scara_arm = False
+        self.is_moving_to_origo = False
         self.arm_route_x_y_positions = []
-        for artwork_pattern in artworks_config['patterns']:
-            artwork = ARTWORKS[artwork_pattern]
-            x_y_route = self._generate_x_y_from_config(
-                lambda_function=artwork['func'],
-                lower_limit=artwork['lower_limit'],
-                upper_limit=artwork['upper_limit'],
-                scale=artwork['scale'],
-                num_steps=artworks_config['number_of_steps_per_cycle']
-            )
-            self.arm_route_x_y_positions.extend(x_y_route)
 
+        # Firebase setup
+        self.db = self._initialize_firestore_database()
+        self.firebase_watcher = self._fetch_and_listen_to_user_setting_changes()
+        time.sleep(3)
+
+        # SCARA robot variables
         self.current_route_index = 0
         self.current_actual_angle_first_arm = 0.
         self.current_actual_angle_second_arm = 0.
         self.previous_actual_angle_first_arm = 0.
         self.previous_actual_angle_second_arm = 0.
 
-        if artworks_config['visualization_mode']:
-            plt.style.use("ggplot")
-            absolute_value_axis_limits = self.length_first_arm + self.length_second_arm
-            self.fig = plt.figure()
-            self.ax = plt.axes(
-                xlim=(-absolute_value_axis_limits, absolute_value_axis_limits),
-                ylim=(-absolute_value_axis_limits, absolute_value_axis_limits)
-            )
+        # Plotting settings
+        plt.style.use("ggplot")
+        absolute_value_axis_limits = self.length_first_arm + self.length_second_arm
+        self.fig = plt.figure()
+        self.ax = plt.axes(
+            xlim=(-absolute_value_axis_limits, absolute_value_axis_limits),
+            ylim=(-absolute_value_axis_limits, absolute_value_axis_limits)
+        )
 
-            x_y_first_arm, x_y_second_arm = self._compute_x_y_position_arms()
-            self.x_y_trajectory = deque([(x_y_second_arm['x'][1], x_y_second_arm['y'][1])])
-            self.x_trajectory = deque([x_y_second_arm['x'][1]],
-                                      maxlen=artworks_config['number_of_steps_per_cycle'])
-            self.y_trajectory = deque([x_y_second_arm['y'][1]],
-                                      maxlen=artworks_config['number_of_steps_per_cycle'])
+        x_y_first_arm, x_y_second_arm = self._compute_x_y_position_arms()
+        self.x_y_trajectory = deque([(x_y_second_arm['x'][1], x_y_second_arm['y'][1])])
+        self.x_trajectory = deque([x_y_second_arm['x'][1]],
+                                  maxlen=1000)
+        self.y_trajectory = deque([x_y_second_arm['y'][1]],
+                                  maxlen=1000)
 
-            self.first_arm_plot, = self.ax.plot(x_y_first_arm['x'], x_y_first_arm['y'])
-            self.second_arm_plot, = self.ax.plot(x_y_second_arm['x'], x_y_second_arm['y'])
-            self.x_y_trajectory_plot, = self.ax.plot(x_y_second_arm['x'][1], x_y_second_arm['y'][1])
+        self.first_arm_plot, = self.ax.plot(x_y_first_arm['x'], x_y_first_arm['y'])
+        self.second_arm_plot, = self.ax.plot(x_y_second_arm['x'], x_y_second_arm['y'])
+        self.x_y_trajectory_plot, = self.ax.plot(x_y_second_arm['x'][1], x_y_second_arm['y'][1])
+
+    @staticmethod
+    def _initialize_firestore_database():
+        """
+        Initialize a connection with Firebase's Firestore. Credentials are fetched from the environment variable
+        GOOGLE_APPLICATION_CREDENTIALS.
+
+        Return
+        ------
+        firestore.Client
+            Firebase
+        """
+        assert os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None, \
+            "Provide authentication credentials to your application code by setting the environment variable " \
+            "GOOGLE_APPLICATION_CREDENTIALS to the path of the gcloud auth key"
+        return firestore.Client()
+
+    def _fetch_and_listen_to_user_setting_changes(self):
+        """
+        Setting up a watcher on the user_settings for this specific machine's uid. The function
+        self._on_firebase_change_user_settings will be executed on instantiation of this class, as well as when
+        a change has happened on firestore to the 'user_settings' for this specific machine.
+
+        Return
+        ------
+        firestore.Watch
+            Firestore watcher
+        """
+        return self.db.collection(u'user_settings') \
+                      .document(self.machine_id) \
+                      .on_snapshot(self._on_firebase_change_user_settings)
+
+    def _on_firebase_change_user_settings(self, docs, changes, read_time):
+        """
+        Updating the robot and artwork settings when a change has happened on firestore, for this specific
+        machine's uid.
+
+        If the machine is running an there's an active (x, y) arm route, the machine will return to origo and pause
+        the scara arm before updating the settings.
+        """
+        if len(self.arm_route_x_y_positions) != 0:
+            self._return_to_origo_x_y(num_steps=self.number_of_steps_to_origo)
+
+        self.stop_scara_arm = True
+        for doc in docs:
+            user_settings = doc.to_dict()
+            self.length_first_arm = user_settings['length_first_arm']
+            self.length_second_arm = user_settings['length_second_arm']
+            self.angle_per_motor_step = user_settings['angle_per_motor_step']
+            self.number_of_steps_to_origo = user_settings['number_of_steps_to_origo']
+
+            self.arm_route_x_y_positions = []
+            for pattern_document in user_settings['active_artwork_patterns']:
+                artwork_pattern_settings = pattern_document.get().to_dict()
+                x_y_route = self._generate_x_y_artwork_pattern(
+                    lambda_function=artwork_pattern_settings['polar_equation'],
+                    lower_limit=artwork_pattern_settings['lower_limit'],
+                    upper_limit=artwork_pattern_settings['upper_limit'],
+                    scale=artwork_pattern_settings['scale'],
+                    num_steps=artwork_pattern_settings['number_of_steps_per_cycle']
+                )
+                self.arm_route_x_y_positions.extend(x_y_route)
+
+        self.stop_scara_arm = False
 
     @staticmethod
     def _artwork_is_cyclic(route: List[Tuple[float, float]], epsilon=1e-6):
@@ -104,53 +167,66 @@ class ScaraRobot:
         else:
             return False
 
-    def _generate_x_y_from_config(self,
-                                  lambda_function: Callable,
-                                  num_steps: int,
-                                  scale: float = 1,
-                                  lower_limit: float = 0,
-                                  upper_limit: float = 2*np.pi) -> List[Tuple[float, float]]:
+    def _generate_x_y_artwork_pattern(self,
+                                      lambda_function: Union[str, Callable],
+                                      num_steps: Union[int, str],
+                                      lower_limit: Union[str, float],
+                                      upper_limit: Union[float, str],
+                                      scale: Union[str, float] = 1.) -> List[Tuple[float, float]]:
         """
         Generates a list of (x, y) coordinates, generated from a polar equation implemented as a lambda function.
 
         Parameters
         ----------
-        lambda_function : Callable
+        lambda_function : str or Callable
             Radius polar equation implemented as a lambda function. The lambda function is only allowed to include
             the parameter "theta", and shall return a single float or integer.
 
-            Example: lambda_function = eval("lambda theta: 3 + np.sin(10*theta)")
+            Example: lambda_function = eval("lambda theta: 3 + np.sin(10*theta)") or
+            "lambda theta: 3 + np.sin(10*theta)"
 
-        num_steps : int
+        num_steps : str or int
             Number of samples to generate between lower_limit and upper_limit.
 
-        scale : float
-            Scaling factor. Increases size of polar equation graph.
-
-        lower_limit : float
+        lower_limit : str or float
             Starting value in the list of theta.
 
-        upper_limit : float
+        upper_limit : str or float
             Ending value in the list of theta.
+
+        scale : str or float
+            Scaling factor. Increases size of polar equation graph.
 
         Return
         ------
         list
             List of tuples, containing (x, y) coordinates.
         """
+        if isinstance(lambda_function, str):
+            lambda_function = eval(lambda_function)
+        if isinstance(num_steps, str):
+            num_steps = int(num_steps)
+        if isinstance(scale, str):
+            scale = float(scale)
+        if isinstance(lower_limit, str):
+            lower_limit = eval(lower_limit)
+        if isinstance(upper_limit, str):
+            upper_limit = eval(upper_limit)
+
         import inspect
         lambda_args = inspect.getfullargspec(lambda_function).args
         assert len(lambda_args) == 1 and lambda_args[0] == 'theta', \
             "lambda_function is only allowed to have one parameter: 'theta'"
 
-        # Generate (x, y) coordinates of artwork
+        # Generate (x, y) coordinates of artwork polar equation
         theta_list = np.linspace(lower_limit, upper_limit, num_steps)
         coordinates = []
         for theta in theta_list:
             r = lambda_function(theta=theta)*scale
             coordinates.append((r * np.cos(theta), r * np.sin(theta)))
 
-        # Check if (x, y) coordinates are OK for arms to draw
+        # Check if (x, y) coordinates are OK for arms to draw, i.e. it's long enought to reach the (x, y)
+        # positions.
         for x, y in coordinates:
             if np.sqrt(x**2 + y**2) > self.length_first_arm + self.length_second_arm:
                 raise ValueError(f"Magnitude from origo to ({x}, {y}) too large for arms to draw. "
@@ -307,7 +383,7 @@ class ScaraRobot:
 
         return direction, num_steps
 
-    def _num_step_second_motor(self):
+    def _num_step_second_motor(self) -> Tuple[int, int]:
         """
         Computes the direction and number of steps of second stepper motor to end up as close as possible to the
         current angle of the second arm.
@@ -369,6 +445,35 @@ class ScaraRobot:
 
         return self.first_arm_plot, self.second_arm_plot, self.x_y_trajectory_plot
 
+    def _return_to_origo_x_y(self, num_steps=50):
+        self.stop_scara_arm, self.is_moving_to_origo = True, True
+        _, x_y_second_arm = self._compute_x_y_position_arms()
+        current_x, current_y = x_y_second_arm['x'][1], x_y_second_arm['y'][1]
+
+        if current_x >= 0:
+            x, y = (0, current_x), (0, current_y)
+            x_interpolation = np.linspace(x[0], x[1], num_steps)
+            y_interpolation = np.interp(x_interpolation, x, y)
+            x_interpolation = np.flip(x_interpolation)
+            y_interpolation = np.flip(y_interpolation)
+        else:
+            x, y = (current_x, 0), (current_y, 0)
+            x_interpolation = np.linspace(x[0], x[1], num_steps)
+            y_interpolation = np.interp(x_interpolation, x, y)
+
+        to_origo_coordinates = [(x_coordinate, y_coordinate)
+                                for x_coordinate, y_coordinate in zip(x_interpolation, y_interpolation)]
+
+        self.current_route_index = 0
+        self.arm_route_x_y_positions = []
+        self.arm_route_x_y_positions.extend(to_origo_coordinates)
+        self.stop_scara_arm = False
+
+        time.sleep(15)
+        self.is_moving_to_origo = False
+        self.current_route_index = 0
+        self.arm_route_x_y_positions = []
+
     def _visualization_step(self, i):
         """
         Step function in matplotlib's FuncAnimation.
@@ -382,16 +487,18 @@ class ScaraRobot:
         ------
         None
         """
-        self._step()
+        if (not self.stop_scara_arm and not self.is_moving_to_origo) or \
+                (self.is_moving_to_origo and self.current_route_index < self.number_of_steps_to_origo - 1):
+            self._step()
 
-        x_y_first_arm, x_y_second_arm = self._compute_x_y_position_arms()
-        self.x_trajectory.append(x_y_second_arm['x'][1])
-        self.y_trajectory.append(x_y_second_arm['y'][1])
-        self.x_y_trajectory.append((x_y_second_arm['x'][1], x_y_second_arm['y'][1]))
+            x_y_first_arm, x_y_second_arm = self._compute_x_y_position_arms()
+            self.x_trajectory.append(x_y_second_arm['x'][1])
+            self.y_trajectory.append(x_y_second_arm['y'][1])
+            self.x_y_trajectory.append((x_y_second_arm['x'][1], x_y_second_arm['y'][1]))
 
-        self.first_arm_plot.set_data(x_y_first_arm['x'], x_y_first_arm['y'])
-        self.second_arm_plot.set_data(x_y_second_arm['x'], x_y_second_arm['y'])
-        self.x_y_trajectory_plot.set_data(list(self.x_trajectory), list(self.y_trajectory))
+            self.first_arm_plot.set_data(x_y_first_arm['x'], x_y_first_arm['y'])
+            self.second_arm_plot.set_data(x_y_second_arm['x'], x_y_second_arm['y'])
+            self.x_y_trajectory_plot.set_data(list(self.x_trajectory), list(self.y_trajectory))
 
     def _step(self):
         """
@@ -417,30 +524,9 @@ class ScaraRobot:
     def start(self):
         animation_interval = len(self.arm_route_x_y_positions) - 1
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=15, blit=False, save_count=animation_interval)
+                             interval=20, blit=False, save_count=animation_interval)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
     def stop(self):
         raise NotImplementedError
-
-    def _add_return_to_origo_x_y(self, num_steps=50):
-        _, x_y_second_arm = self._compute_x_y_position_arms()
-        current_x, current_y = x_y_second_arm['x'][1], x_y_second_arm['y'][1]
-
-        if current_x >= 0:
-            x, y = (0, current_x), (0, current_y)
-            x_interpolation = np.linspace(x[0], x[1], num_steps)
-            y_interpolation = np.interp(x_interpolation, x, y)
-            x_interpolation = np.flip(x_interpolation)
-            y_interpolation = np.flip(y_interpolation)
-        else:
-            x, y = (current_x, 0), (current_y, 0)
-            x_interpolation = np.linspace(x[0], x[1], num_steps)
-            y_interpolation = np.interp(x_interpolation, x, y)
-
-        to_origo_coordinates = [(x_coordinate, y_coordinate)
-                                for x_coordinate, y_coordinate in zip(x_interpolation, y_interpolation)]
-
-        self.arm_route_x_y_positions = []
-        self.arm_route_x_y_positions.extend(to_origo_coordinates)
