@@ -43,7 +43,9 @@ class ScaraRobot:
         self.arm_route_x_y_positions = []
 
         # Firebase setup
-        self.db = self._initialize_firestore_database()
+        self.db = self._initialize_firestore_database(
+            gcloud_key_absolute_path=machine_config['gcloud_key_absolute_path']
+        )
         self.firebase_watcher = self._fetch_and_listen_to_user_setting_changes()
         time.sleep(3)
 
@@ -75,20 +77,25 @@ class ScaraRobot:
         self.x_y_trajectory_plot, = self.ax.plot(x_y_second_arm['x'][1], x_y_second_arm['y'][1])
 
     @staticmethod
-    def _initialize_firestore_database():
+    def _initialize_firestore_database(gcloud_key_absolute_path: str):
         """
         Initialize a connection with Firebase's Firestore. Credentials are fetched from the environment variable
         GOOGLE_APPLICATION_CREDENTIALS.
+
+        Parameters
+        ----------
+        gcloud_key_absolute_path : str
+            Absolute path to gcloud service account key
 
         Return
         ------
         firestore.Client
             Firebase
         """
-        assert os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None, \
-            "Provide authentication credentials to your application code by setting the environment variable " \
-            "GOOGLE_APPLICATION_CREDENTIALS to the path of the gcloud auth key"
-        return firestore.Client()
+        assert os.path.isfile(gcloud_key_absolute_path), \
+            "gcloud service auth key could not be found"
+
+        return firestore.Client.from_service_account_json(gcloud_key_absolute_path)
 
     def _fetch_and_listen_to_user_setting_changes(self):
         """
