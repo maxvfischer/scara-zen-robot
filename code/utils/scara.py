@@ -38,8 +38,11 @@ class ScaraRobot:
         self.angle_per_motor_step = None
 
         # Artwork settings
-        self.stop_scara_arm = False
+        self.updating_current_x_y_route = False
+        self.user_stop_scara_arm = False
+        self.number_of_steps_to_origo = None
         self.is_moving_to_origo = False
+        self.active_artwork_patterns = []
         self.arm_route_x_y_positions = []
 
         # Firebase setup
@@ -120,30 +123,44 @@ class ScaraRobot:
         If the machine is running an there's an active (x, y) arm route, the machine will return to origo and pause
         the scara arm before updating the settings.
         """
-        if len(self.arm_route_x_y_positions) != 0:
-            self._return_to_origo_x_y(num_steps=self.number_of_steps_to_origo)
-
-        self.stop_scara_arm = True
         for doc in docs:
             user_settings = doc.to_dict()
-            self.length_first_arm = user_settings['length_first_arm']
-            self.length_second_arm = user_settings['length_second_arm']
-            self.angle_per_motor_step = user_settings['angle_per_motor_step']
-            self.number_of_steps_to_origo = user_settings['number_of_steps_to_origo']
+            if self.length_first_arm != user_settings['length_first_arm']:
+                self.length_first_arm = user_settings['length_first_arm']
+            if self.length_second_arm != user_settings['length_second_arm']:
+                self.length_second_arm = user_settings['length_second_arm']
+            if self.angle_per_motor_step != user_settings['angle_per_motor_step']:
+                self.angle_per_motor_step = user_settings['angle_per_motor_step']
+            if self.number_of_steps_to_origo != user_settings['number_of_steps_to_origo']:
+                self.number_of_steps_to_origo = user_settings['number_of_steps_to_origo']
+            if self.user_stop_scara_arm != user_settings['stop_scara_arm']:
+                self.user_stop_scara_arm = user_settings['stop_scara_arm']
 
-            self.arm_route_x_y_positions = []
+            # Check if change in active artwork.
+            active_artwork_patterns = []
             for pattern_document in user_settings['active_artwork_patterns']:
-                artwork_pattern_settings = pattern_document.get().to_dict()
-                x_y_route = self._generate_x_y_artwork_pattern(
-                    lambda_function=artwork_pattern_settings['polar_equation'],
-                    lower_limit=artwork_pattern_settings['lower_limit'],
-                    upper_limit=artwork_pattern_settings['upper_limit'],
-                    scale=artwork_pattern_settings['scale'],
-                    num_steps=artwork_pattern_settings['number_of_steps_per_cycle']
-                )
-                self.arm_route_x_y_positions.extend(x_y_route)
+                active_artwork_patterns.append(pattern_document.id)
+            # If change, return to origo and update artwork patterns.
+            if self.active_artwork_patterns != active_artwork_patterns:
+                self.updating_current_x_y_route = True
 
-        self.stop_scara_arm = False
+                if len(self.arm_route_x_y_positions) != 0:
+                    self._return_to_origo_x_y(num_steps=self.number_of_steps_to_origo)
+
+                self.arm_route_x_y_positions = []
+                for pattern_document in user_settings['active_artwork_patterns']:
+                    artwork_pattern_settings = pattern_document.get().to_dict()
+                    x_y_route = self._generate_x_y_artwork_pattern(
+                        lambda_function=artwork_pattern_settings['polar_equation'],
+                        lower_limit=artwork_pattern_settings['lower_limit'],
+                        upper_limit=artwork_pattern_settings['upper_limit'],
+                        scale=artwork_pattern_settings['scale'],
+                        num_steps=artwork_pattern_settings['number_of_steps_per_cycle']
+                    )
+                    self.arm_route_x_y_positions.extend(x_y_route)
+
+                self.active_artwork_patterns = active_artwork_patterns
+                self.updating_current_x_y_route = False
 
     @staticmethod
     def _artwork_is_cyclic(route: List[Tuple[float, float]], epsilon=1e-6):
@@ -453,7 +470,8 @@ class ScaraRobot:
         return self.first_arm_plot, self.second_arm_plot, self.x_y_trajectory_plot
 
     def _return_to_origo_x_y(self, num_steps=50):
-        self.stop_scara_arm, self.is_moving_to_origo = True, True
+        self.updating_current_x_y_route, self.is_moving_to_origo = True, True
+
         _, x_y_second_arm = self._compute_x_y_position_arms()
         current_x, current_y = x_y_second_arm['x'][1], x_y_second_arm['y'][1]
 
@@ -474,7 +492,7 @@ class ScaraRobot:
         self.current_route_index = 0
         self.arm_route_x_y_positions = []
         self.arm_route_x_y_positions.extend(to_origo_coordinates)
-        self.stop_scara_arm = False
+        self.updating_current_x_y_route = False
 
         time.sleep(15)
         self.is_moving_to_origo = False
@@ -494,7 +512,8 @@ class ScaraRobot:
         ------
         None
         """
-        if (not self.stop_scara_arm and not self.is_moving_to_origo) or \
+        if (not self.user_stop_scara_arm) and \
+                (not self.updating_current_x_y_route and not self.is_moving_to_origo) or \
                 (self.is_moving_to_origo and self.current_route_index < self.number_of_steps_to_origo - 1):
             self._step()
 
@@ -531,7 +550,7 @@ class ScaraRobot:
     def start(self):
         animation_interval = len(self.arm_route_x_y_positions) - 1
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=20, blit=False, save_count=animation_interval)
+                             interval=50, blit=False, save_count=animation_interval)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
