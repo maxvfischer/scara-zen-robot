@@ -53,10 +53,10 @@ class ScaraRobot:
 
         # SCARA robot variables
         self.current_route_index = 0
-        self.current_actual_angle_first_arm = 0.
-        self.current_actual_angle_second_arm = 0.
-        self.previous_actual_angle_first_arm = 0.
-        self.previous_actual_angle_second_arm = 0.
+        self.current_actual_angle_first_arm = 90.
+        self.current_actual_angle_second_arm = 180.
+        self.previous_actual_angle_first_arm = 90.
+        self.previous_actual_angle_second_arm = 180.
 
         # Plotting settings
         plt.style.use("ggplot")
