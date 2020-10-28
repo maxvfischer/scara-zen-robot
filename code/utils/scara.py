@@ -277,7 +277,9 @@ class ScaraRobot:
         coordinates = []
         for theta in theta_list:
             r = lambda_function(theta=theta)*scale
-            coordinates.append((r * np.cos(theta), r * np.sin(theta)))
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            coordinates.append((x, y))
 
         # Check if (x, y) coordinates are OK for arms to draw, i.e. it's long enought to reach the (x, y)
         # positions.
@@ -588,7 +590,7 @@ class ScaraRobot:
 
     def start(self):
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=2, blit=False)
+                             interval=100, blit=False)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
