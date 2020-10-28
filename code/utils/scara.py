@@ -277,7 +277,9 @@ class ScaraRobot:
         coordinates = []
         for theta in theta_list:
             r = lambda_function(theta=theta)*scale
-            coordinates.append((r * np.cos(theta), r * np.sin(theta)))
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            coordinates.append((x, y))
 
         # Check if (x, y) coordinates are OK for arms to draw, i.e. it's long enought to reach the (x, y)
         # positions.
@@ -503,6 +505,17 @@ class ScaraRobot:
         """
         Compute (x, y) coordinates of a straight route from the current (x, y) coordinate to origo.
 
+        TODO: Most artwork patterns start of in a horizontal direction from origo, thus starting with
+              the first arm on the y-axis (angle 90 or 270 degrees) and the second arm folded on the
+              first arm (angle 180 degrees). When returning to origo, the angles of the arms usually
+              end up somewhere else when arriving at origo. Sometimes this lead to the need of taking
+              a couple of hundred steps of first arm to end up on the y-axis.
+              If this is a problem, two potential solutions:
+              1) Choose the "elbow up" or "elbow down" that moves the first arm closest to the y-axis.
+              2) Rotate all artwork pattern routes (rotate the coordinate system), so the first arm
+                 ends up at the y-axis.
+
+
         Parameters
         ----------
         num_steps : int
@@ -588,7 +601,7 @@ class ScaraRobot:
 
     def start(self):
         anim = FuncAnimation(self.fig, self._visualization_step, init_func=self._init_function_visualization,
-                             interval=2, blit=False)
+                             interval=100, blit=False)
         #anim.save('line.gif', writer='imagemagick')
         plt.show()
 
