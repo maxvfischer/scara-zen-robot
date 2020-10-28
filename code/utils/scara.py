@@ -505,6 +505,17 @@ class ScaraRobot:
         """
         Compute (x, y) coordinates of a straight route from the current (x, y) coordinate to origo.
 
+        TODO: Most artwork patterns start of in a horizontal direction from origo, thus starting with
+              the first arm on the y-axis (angle 90 or 270 degrees) and the second arm folded on the
+              first arm (angle 180 degrees). When returning to origo, the angles of the arms usually
+              end up somewhere else when arriving at origo. Sometimes this lead to the need of taking
+              a couple of hundred steps of first arm to end up on the y-axis.
+              If this is a problem, two potential solutions:
+              1) Choose the "elbow up" or "elbow down" that moves the first arm closest to the y-axis.
+              2) Rotate all artwork pattern routes (rotate the coordinate system), so the first arm
+                 ends up at the y-axis.
+
+
         Parameters
         ----------
         num_steps : int
